@@ -1,0 +1,77 @@
+name: CI/CD pipeline for Sonarqube,Nexus,Tomcat
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v3
+
+      - name: set-up jdk
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: validate with maven
+        run: mvn validate
+
+      - name: compile with maven
+        run: mvn compile
+
+      - name: test with maven
+        run: mvn test
+
+      - name: package with maven
+        run: mvn clean package
+        
+      - name: verify WAR file
+        run: ls -lh target/
+
+      - name: SonarQube Scan
+        run: |
+           mvn org.sonarsource.scanner.maven:sonar-maven-plugin:3.11.0.3922:sonar \
+           -Dsonar.projectKey=train-ticket-reservation \
+           -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+           -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+           
+      - name: Configure Maven settings.xml for Nexus
+        run: |
+          mkdir -p ~/.m2
+           cat <<EOF > ~/.m2/settings.xml
+           <settings>
+            <servers>
+             <server>
+               <id>nexus</id>
+               <username>${{ secrets.NEXUS_USERNAME }}</username>
+               <password>${{ secrets.NEXUS_PASSWORD }}</password>
+             </server>
+           </servers>
+          </settings>
+          EOF
+
+      - name: Upload Artifact to Nexus
+        run: |
+            mvn deploy -DaltDeploymentRepository=nexus::default::${{ secrets.NEXUS_REPO_URL }}
+
+      - name: Check Tomcat connection
+        run: |
+          curl --fail --anyauth \
+          -u "${{ secrets.TOMCAT_USER }}:${{ secrets.TOMCAT_PASSWORD }}" \
+          "http://${{ secrets.TOMCAT_HOST }}:8080/manager/text/list"
+
+      - name: Deploy war to Tomcat
+        run: |
+         curl -v \
+         -u "${{ secrets.TOMCAT_USER }}:${{ secrets.TOMCAT_PASSWORD }}" \
+         -T target/TrainBook-1.0.0-SNAPSHOT.war \
+         "http://${{ secrets.TOMCAT_HOST }}:8080/manager/text/deploy?path=/TrainBook&update=true"
+
+
+        
